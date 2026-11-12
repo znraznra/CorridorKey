@@ -14,6 +14,8 @@ def _has_gpu():
     """Check if any GPU backend (CUDA or MPS) is available."""
     if torch.cuda.is_available():
         return True
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return True
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return True
 

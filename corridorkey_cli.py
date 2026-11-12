@@ -283,7 +283,7 @@ def app_callback(
     ctx: typer.Context,
     device: Annotated[
         str,
-        typer.Option(help="Compute device: auto, cuda, mps, cpu"),
+        typer.Option(help="Compute device: auto, cuda[:N], xpu[:N], mps, cpu"),
     ] = "auto",
 ) -> None:
     """Neural network green screen keying for professional VFX pipelines."""

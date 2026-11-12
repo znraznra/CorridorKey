@@ -197,21 +197,25 @@ class CorridorKeyService:
         return self._device
 
     def get_vram_info(self) -> dict[str, float]:
-        """Get GPU VRAM info in GB. Returns empty dict if not CUDA."""
+        """Get selected CUDA/XPU device VRAM info in GB."""
         try:
             import torch
 
-            if not torch.cuda.is_available():
+            device = torch.device(self._device)
+            if device.type not in ("cuda", "xpu"):
                 return {}
-            props = torch.cuda.get_device_properties(0)
+            gpu = getattr(torch, device.type)
+            if not gpu.is_available():
+                return {}
+            props = gpu.get_device_properties(device)
             total_bytes = props.total_memory
-            reserved = torch.cuda.memory_reserved(0)
+            reserved = gpu.memory_reserved(device)
             return {
                 "total": total_bytes / (1024**3),
                 "reserved": reserved / (1024**3),
-                "allocated": torch.cuda.memory_allocated(0) / (1024**3),
+                "allocated": gpu.memory_allocated(device) / (1024**3),
                 "free": (total_bytes - reserved) / (1024**3),
-                "name": torch.cuda.get_device_name(0),
+                "name": gpu.get_device_name(device),
             }
         except (RuntimeError, OSError) as e:
             logger.debug(f"VRAM query failed: {e}")
@@ -225,6 +229,8 @@ class CorridorKeyService:
 
             if torch.cuda.is_available():
                 return torch.cuda.memory_allocated(0) / (1024**2)
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                return torch.xpu.memory_allocated(0) / (1024**2)
         except Exception:
             pass
         return 0.0

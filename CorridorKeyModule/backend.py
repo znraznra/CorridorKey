@@ -470,6 +470,13 @@ def create_engine(
         from CorridorKeyModule.inference_engine import CorridorKeyEngine
 
         logger.info("Torch engine loaded: %s (device=%s, screen=%s)", ckpt.name, device, screen_color)
+        from device_utils import recommended_model_precision
+
+        precision = recommended_model_precision(device or "cpu")
         return CorridorKeyEngine(
-            checkpoint_path=str(ckpt), device=device or "cpu", img_size=img_size, model_precision=torch.float16
+            checkpoint_path=str(ckpt),
+            device=device or "cpu",
+            img_size=img_size,
+            model_precision=precision,
+            mixed_precision=precision == torch.float16,
         )

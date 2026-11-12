@@ -32,6 +32,8 @@ from device_utils import (
 def _patch_gpu(monkeypatch, *, cuda=False, mps=False):
     """Mock CUDA and MPS availability flags."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
+    if hasattr(torch, "xpu"):
+        monkeypatch.setattr(torch.xpu, "is_available", lambda: False)
     # MPS lives behind torch.backends.mps; ensure the attr path exists
     mps_backend = MagicMock()
     mps_backend.is_available = MagicMock(return_value=mps)
@@ -451,5 +453,7 @@ class TestEnumerateGpus:
         monkeypatch.setattr("device_utils._enumerate_nvidia", lambda: None)
         monkeypatch.setattr("device_utils._enumerate_amd", lambda: None)
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        if hasattr(torch, "xpu"):
+            monkeypatch.setattr(torch.xpu, "is_available", lambda: False)
 
         assert enumerate_gpus() == []

@@ -79,6 +79,7 @@ class CorridorKeyEngine:
             self.mixed_precision = False
 
         self.model_precision = model_precision
+        self._compiled = False
 
         self._is_rocm = hasattr(torch.version, "hip") and torch.version.hip
         self.model = self._load_model()
@@ -94,6 +95,10 @@ class CorridorKeyEngine:
         skip_reason = None
         if self._is_rocm and sys.platform == "win32":
             skip_reason = "ROCm on Windows — Triton compilation hangs"
+        elif self.device.type == "xpu":
+            skip_reason = "Intel XPU uses eager inference for portability"
+        elif self.device.type == "cuda" and torch.cuda.get_device_capability(self.device)[0] < 7:
+            skip_reason = "legacy CUDA GPU — eager inference avoids unsupported Triton kernels"
         elif os.environ.get("CORRIDORKEY_SKIP_COMPILE") == "1":
             skip_reason = "CORRIDORKEY_SKIP_COMPILE=1"
         elif sys.platform == "win32" and not shutil.which("cl"):
@@ -125,10 +130,12 @@ class CorridorKeyEngine:
         if self.checkpoint_path.endswith(".safetensors"):
             from safetensors.torch import load_file
 
-            state_dict = load_file(self.checkpoint_path, device=str(self.device))
+            # CPU loading avoids a second complete checkpoint on a small GPU
+            # and supports Intel devices across safetensors versions.
+            state_dict = load_file(self.checkpoint_path, device="cpu")
         else:
             # DEPRECATED: remove after .pth sunset
-            checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
+            checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=True)
             state_dict = checkpoint.get("state_dict", checkpoint)
 
         # Fix Compiled Model Prefix & Handle PosEmbed Mismatch
@@ -205,6 +212,7 @@ class CorridorKeyEngine:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             self.model = compiled_model
+            self._compiled = True
             logger.info("Model compiled successfully (mode=%s)", compile_mode)
 
         except Exception as e:
@@ -433,7 +441,8 @@ class CorridorKeyEngine:
         Returns:
              dict: {'alpha': np, 'fg': np (sRGB), 'comp': np (sRGB on Gray)}
         """
-        torch.compiler.cudagraph_mark_step_begin()
+        if self.device.type == "cuda" and getattr(self, "_compiled", False):
+            torch.compiler.cudagraph_mark_step_begin()
 
         # If input is a single image, add batch dimension
         if image.ndim == 3:

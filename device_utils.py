@@ -10,7 +10,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 DEVICE_ENV_VAR = "CORRIDORKEY_DEVICE"
-VALID_DEVICES = ("auto", "cuda", "mps", "cpu")
+VALID_DEVICES = ("auto", "cuda", "xpu", "mps", "cpu")
 
 
 def is_rocm_system() -> bool:
@@ -55,11 +55,13 @@ def setup_rocm_env() -> None:
 
 
 def detect_best_device() -> str:
-    """Auto-detect best available device: CUDA > MPS > CPU."""
+    """Auto-detect best available device: CUDA > XPU > MPS > CPU."""
     import torch
 
     if torch.cuda.is_available():
         device = "cuda"
+    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+        device = "xpu"
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     else:
@@ -76,7 +78,7 @@ def resolve_device(requested: str | None = None) -> str:
                    env var lookup then auto-detection.
 
     Returns:
-        Validated device string ("cuda", "mps", or "cpu").
+        Validated device string (cuda/xpu with optional index, mps, or cpu).
 
     Raises:
         RuntimeError: If the requested backend is unavailable.
@@ -92,16 +94,29 @@ def resolve_device(requested: str | None = None) -> str:
         return detect_best_device()
 
     device = device.lower()
-    if device not in VALID_DEVICES:
+    base, _, index = device.partition(":")
+    if base not in VALID_DEVICES or base == "auto" or (":" in device and not index.isdecimal()):
         raise RuntimeError(f"Unknown device '{device}'. Valid options: {', '.join(VALID_DEVICES)}")
+    if ":" in device and base not in ("cuda", "xpu"):
+        raise RuntimeError("Device indices are supported for cuda and xpu only")
 
     # Validate the explicit request
-    if device == "cuda":
+    if base == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "CUDA requested but torch.cuda.is_available() is False. Install a CUDA-enabled PyTorch build."
             )
-    elif device == "mps":
+        if index and int(index) >= torch.cuda.device_count():
+            raise RuntimeError(f"CUDA device index out of range: {device}")
+    elif base == "xpu":
+        if not hasattr(torch, "xpu") or not torch.xpu.is_available():
+            raise RuntimeError(
+                "XPU requested but Intel GPU support is unavailable. "
+                "Run scripts/setup_gpu.py --profile arc with the Intel GPU driver installed."
+            )
+        if index and int(index) >= torch.xpu.device_count():
+            raise RuntimeError(f"XPU device index out of range: {device}")
+    elif base == "mps":
         if not hasattr(torch.backends, "mps"):
             raise RuntimeError(
                 "MPS requested but this PyTorch build has no MPS support. Install PyTorch >= 1.12 with MPS backend."
@@ -112,6 +127,18 @@ def resolve_device(requested: str | None = None) -> str:
             )
 
     return device
+
+
+def recommended_model_precision(device):
+    """Avoid slow Pascal half arithmetic and unsupported CPU half operations."""
+    import torch
+
+    selected = torch.device(device)
+    if selected.type == "cpu":
+        return torch.float32
+    if selected.type == "cuda" and torch.cuda.get_device_capability(selected)[0] < 7:
+        return torch.float32
+    return torch.float16
 
 
 @dataclass
@@ -261,6 +288,16 @@ def enumerate_gpus() -> list[GPUInfo]:
                 total = props.total_memory / (1024**3)
                 fallback.append(GPUInfo(index=i, name=props.name, vram_total_gb=total, vram_free_gb=total))
             return fallback
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return [
+                GPUInfo(
+                    index=i,
+                    name=torch.xpu.get_device_name(i),
+                    vram_total_gb=torch.xpu.get_device_properties(i).total_memory / (1024**3),
+                    vram_free_gb=torch.xpu.mem_get_info(i)[0] / (1024**3),
+                )
+                for i in range(torch.xpu.device_count())
+            ]
     except RuntimeError:
         logger.debug("torch.cuda init failed, falling through", exc_info=True)
 
@@ -271,8 +308,10 @@ def clear_device_cache(device) -> None:
     """Clear GPU memory cache if applicable (no-op for CPU)."""
     import torch
 
-    device_type = device.type if isinstance(device, torch.device) else device
+    device_type = torch.device(device).type
     if device_type == "cuda":
         torch.cuda.empty_cache()
     elif device_type == "mps":
         torch.mps.empty_cache()
+    elif device_type == "xpu":
+        torch.xpu.empty_cache()

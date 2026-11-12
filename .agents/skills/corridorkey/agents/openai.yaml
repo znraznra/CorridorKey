@@ -1,0 +1,4 @@
+interface:
+  display_name: "CorridorKey Video"
+  short_description: "Key screens or prepare green-screen video locally"
+  default_prompt: "Use $corridorkey to process this video and give me a local 480p MP4 preview."

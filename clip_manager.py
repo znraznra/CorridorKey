@@ -1151,9 +1151,9 @@ if __name__ == "__main__":
     parser.add_argument("--win_path", help=r"Windows Path (example: V:\...) for Wizard Mode", default=None)
     parser.add_argument(
         "--device",
-        choices=["auto", "cuda", "mps", "cpu"],
+        # resolve_device validates names and optional cuda:N / xpu:N indices.
         default="auto",
-        help="Compute device (default: auto-detect CUDA > MPS > CPU)",
+        help="Compute device: cuda[:N], xpu[:N], mps, cpu (auto: CUDA > XPU > MPS > CPU)",
     )
     parser.add_argument(
         "--backend",

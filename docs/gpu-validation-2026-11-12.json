@@ -1,0 +1,72 @@
+{
+  "checked_at_utc": "2026-11-12T00:59:02.185360+00:00",
+  "upstream_commit": "97e55a453060745bead1befd293f6e523c4b845c",
+  "p600_status": "trained-model GPU and normal CLI pipeline passed",
+  "arc_status": "XPU paths unit-tested; B580/Arch hardware validation pending",
+  "tests": {
+    "passed": 438,
+    "skipped_optional_mlx": 1
+  },
+  "cli_readback": {
+    "frames": 3,
+    "passes": 4,
+    "finite_and_dimensions": "passed",
+    "exr_dtype": "float32"
+  },
+  "preview": {
+    "width": 854,
+    "height": 480,
+    "frames": 72,
+    "fps": 24,
+    "duration_seconds": 3,
+    "encoder_evidence": "h264_nvenc in FFmpeg diagnostics",
+    "full_decode": "passed",
+    "visual_review": "comparison PNG and decoded midpoint inspected; synthetic footage only"
+  },
+  "timings": [
+    {
+      "image_size": 512,
+      "mean_seconds_per_frame": 0.972875266665748,
+      "peak_allocated_bytes": 533032960,
+      "peak_reserved_bytes": 740294656
+    },
+    {
+      "image_size": 1024,
+      "mean_seconds_per_frame": 3.2589926666793567,
+      "peak_allocated_bytes": 1257598976,
+      "peak_reserved_bytes": 1962934272
+    },
+    {
+      "image_size": 2048,
+      "mean_seconds_per_frame": 34.3047588999907,
+      "peak_allocated_bytes": 4147999232,
+      "peak_reserved_bytes": 6819938304
+    }
+  ],
+  "limits": [
+    "Synthetic 1280x720 plates only; no production footage tested",
+    "2048 short run reserves more than dedicated GPU memory; prefer 1024",
+    "Optional hint-generation models unvalidated"
+  ],
+  "skill_helpers": {
+    "status": "passed",
+    "synthetic_only": true,
+    "frames": 12,
+    "fps": 24,
+    "dimensions": [
+      640,
+      480
+    ],
+    "hint_direction_and_count": "passed",
+    "source_preserved": "passed",
+    "overwrite_guards": "passed",
+    "nvenc_evidence": "h264_nvenc in encode log",
+    "decoded_green_and_subject_pixels": "passed",
+    "full_av_decode": "passed",
+    "aac_bitstream_identity": "30bf739e78d46cde5d7bc7e260d3c8b1dee24dda3436b89a8a95420d9a26778b",
+    "keyer_video_chroma_hint_roundtrip": "3 trained-model frames and four passes passed",
+    "keyer_exr_to_green_roundtrip": "3 frames passed",
+    "ordinary_background_segmentation": "not implemented or validated by these helpers"
+  },
+  "scope": "Historical synthetic verification, not a fresh-clone or cross-device hardware guarantee"
+}
