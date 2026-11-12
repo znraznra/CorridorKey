@@ -26,7 +26,24 @@ def python312_command():
     raise RuntimeError("Install Python 3.12 or uv, then rerun bootstrap. System Python will not be replaced.")
 
 
-def build_plan(profile, with_tests=False):
+def build_plan(profile, with_tests=False, engine="v1", device=None):
+    if engine == "v2":
+        if profile != "arc":
+            raise ValueError("CorridorKey 2 currently supports only the experimental arc profile; use v1 for P600.")
+        requested = device or "xpu"
+        if requested != "xpu" and not (requested.startswith("xpu:") and requested[4:].isdigit()):
+            raise ValueError("CorridorKey 2 setup requires xpu or xpu:N; no CUDA/CPU fallback.")
+        return {
+            "root": str(ROOT), "engine": "v2", "profile": profile, "device": device or "xpu",
+            "setup_command": [*python312_command(), "-X", "utf8", str(ROOT / "scripts/ck2.py"),
+                              "setup", "--device", device or "xpu", *(["--with-tests"] if with_tests else [])],
+            "environment": str(ROOT / ".local/ck2/venv"),
+            "runtime_file": str(ROOT / ".local/runtime-v2.json"),
+            "source": str(ROOT / ".local/ck2/source"),
+            "skill": str(ROOT / ".agents/skills/corridorkey/SKILL.md"),
+        }
+    if device is not None:
+        raise ValueError("--device is currently a v2 option; v1 uses the selected profile.")
     setup = [*python312_command(), "-X", "utf8", str(ROOT / "scripts/setup_gpu.py"), "--profile", profile]
     if with_tests:
         setup.append("--with-tests")
@@ -43,6 +60,8 @@ def build_plan(profile, with_tests=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=DEVICES, required=True)
+    parser.add_argument("--engine", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--device", help="v2 only: xpu or xpu:N")
     parser.add_argument("--with-tests", action="store_true")
     parser.add_argument("--ffprobe", type=Path, help="Use an existing ffprobe executable")
     parser.add_argument("--skip-model", action="store_true", help="Download the green checkpoint on first use instead")
@@ -52,9 +71,20 @@ def main():
     args = parser.parse_args()
     if sys.platform not in ("win32", "linux"):
         parser.error("These setup profiles target Windows/Linux; this platform has not been provisioned or validated.")
-    plan = build_plan(args.profile, args.with_tests)
+    try:
+        plan = build_plan(args.profile, args.with_tests, args.engine, args.device)
+    except ValueError as error:
+        parser.error(str(error))
     if args.dry_run:
         print(json.dumps(plan, indent=2))
+        return
+    if args.engine == "v2":
+        command = plan["setup_command"]
+        if args.skip_model:
+            command.append("--skip-model")
+        if args.ffprobe:
+            command += ["--ffprobe", str(args.ffprobe.resolve())]
+        subprocess.run(command, cwd=ROOT, check=True)
         return
     subprocess.run(plan["setup_command"], cwd=ROOT, check=True)
     python = ROOT / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")

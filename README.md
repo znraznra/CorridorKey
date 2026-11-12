@@ -6,6 +6,7 @@ A local adaptation of [CorridorKey by Corridor Digital](https://github.com/nikop
 
 ## Current changes
 
+- An opt-in CorridorKey 2.0 / B580 integration with a separate environment, pinned upstream source and XPU patch. See [the CK2 guide](docs/CORRIDORKEY2.md); on-device inference validation is pending.
 - Pascal-compatible PyTorch/CUDA 12.6 setup and FP32 eager inference for the P600.
 - Intel XPU device selection, indexed devices, cache handling and an Arc setup profile.
 - Explicit modern NVIDIA and CPU profiles; no automatic fallback from a failed GPU request.
@@ -31,6 +32,7 @@ A white hint does not turn CorridorKey into an arbitrary-background remover. Opt
 | Component | Status | Evidence / boundary |
 | --- | --- | --- |
 | Quadro P600, Windows | Locally tested, short synthetic clips | Trained model at 512/1024/2048, normal batch launcher, EXR readback and GPU operations passed |
+| CorridorKey 2.0 / B580, Linux | Experimental integration; hardware validation pending | Separate setup, XPU BF16 execution patch and pretrained smoke-test command; v1 remains the default |
 | Intel Arc B580, Arch Linux | Experimental; on-device validation pending | XPU routing/error handling unit-tested; no B580 execution or QSV throughput claim |
 | Newer NVIDIA / cu128 | Setup profile provided, not hardware-validated here | Select only for a GPU supported by that wheel build; not Pascal |
 | CPU | Explicit profile provided | CPU reference inference was checked in the original test; fresh CPU-wheel bootstrap/performance not established |
@@ -63,6 +65,8 @@ cd CorridorKey
 ```
 
 Replace the URL after publishing your repository. Then choose **one** profile:
+
+The following commands configure **version 1**. For the optional version 2 Arc backend, use `python bootstrap.py --engine v2 --profile arc` and follow [the CK2 setup and validation guide](docs/CORRIDORKEY2.md). It uses `.local/ck2/venv` and `.local/runtime-v2.json`, leaving the P600 installation intact. Use `python run.py --engine v2 check` or `keyer ...` to select it explicitly; an omitted `--engine` continues using v1.
 
 | Machine | Command |
 | --- | --- |
@@ -110,6 +114,17 @@ RGBA EXR output. Preserve source timing and audio; report any limitations.
 ```
 
 If it does not appear, check the project folder and `/skills`; Codex documents automatic skill detection and restarting if an update does not appear. No separate skill clone is required.
+
+For the experimental B580 backend, specify the version in your prompt:
+
+```text
+Use $corridorkey with CorridorKey 2 on my Arc B580. Read the v2 runtime
+reference, check the separate environment and run the pretrained smoke test
+first. Then key a short sample of <absolute video path>, with alpha, straight
+linear FG and RGBA EXRs. Make a local 480p checkerboard MP4 preview, preserve
+source audio in that preview, and report hardware or quality limitations.
+Keep the P600's version 1 environment intact.
+```
 
 ## Use with Claude Code
 

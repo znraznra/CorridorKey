@@ -1,0 +1,99 @@
+{
+  "saved_at_utc": "2026-11-12T07:53:49.304821+00:00",
+  "contributor": "Arnold Libelo",
+  "scope": "Local CorridorKey 2 experimental Arc integration; preserve version 1 P600",
+  "upstream": {
+    "upstream": "https://github.com/nikopueringer/CorridorKey2.0.git",
+    "revision": "485f5e9ab759ead6138cc990776184b59d6ea971",
+    "patch_sha256": "3e1597be578289148ba793c42c29e13109028f6ecf2a869372aafb18126f7647"
+  },
+  "ck2_model_revision": "cf44a8db3f024bb49fd59daa408848ccf05f7477",
+  "checks": {
+    "pinned_source_fetch_patch_and_repeat_setup": "passed",
+    "full_suite": {
+      "passed": 465,
+      "skipped": 1,
+      "skip": "optional MLX unavailable",
+      "seconds": 137.29
+    },
+    "final_routing_portability_subset": {
+      "passed": 21,
+      "seconds": 39.16
+    },
+    "ck2_torch_2_9_1_cpu_pipeline_tests": {
+      "passed": 6,
+      "seconds": 42.45,
+      "models": "tiny CPU stand-ins, not pretrained CK2"
+    },
+    "ck2_pinned_dependencies_cpu_environment_pip_check": "passed",
+    "linux_cp312_xpu_torch_and_torchvision_wheels": "listed on official PyTorch XPU index",
+    "ruff": "passed",
+    "repo_and_personal_skill_format_validation": "passed",
+    "skill_zip": {
+      "files": 8,
+      "contains_engine_or_weights": false
+    }
+  },
+  "p600_pretrained_regression": {
+    "saved_at_utc": "2026-11-12T07:47:29.946629+00:00",
+    "hardware": {
+      "torch": "2.8.0+cu126",
+      "device": "cuda:0",
+      "name": "Quadro P600",
+      "vram_bytes": 4294836224,
+      "precision": "torch.float32",
+      "cuda_runtime": "12.6",
+      "gpu_convolution_and_matmul": "passed",
+      "compute_capability": [
+        6,
+        1
+      ],
+      "compiled_architectures": [
+        "sm_61",
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90"
+      ]
+    },
+    "fixture": "synthetic 1280x720 plate; official trained weights; no real-footage quality claim",
+    "checkpoint_sha256": "74d614f7d92fc559a118c30a7deadedc3cacd8ef83dcb85a030d0bed7af8b20b",
+    "warmup_seconds": 4.5688923000125214,
+    "image_size": 512,
+    "model_precision": "torch.float32",
+    "compiled": false,
+    "observed_model_input_devices": [
+      "cuda:0",
+      "cuda:0",
+      "cuda:0",
+      "cuda:0"
+    ],
+    "seconds_per_frame": [
+      0.9129855000064708,
+      0.9860314000106882,
+      0.9168562999984715
+    ],
+    "mean_seconds_per_frame": 0.9386244000052102,
+    "peak_allocated_bytes": 533032960,
+    "peak_reserved_bytes": 740294656,
+    "output_shapes_and_finite_values": "passed",
+    "cpu_reference_mean_absolute_error": {
+      "alpha": 7.603976115433397e-09,
+      "fg": 2.1069746836133163e-08
+    },
+    "status": "passed"
+  },
+  "v1_runtime_sha256": "005371ccc06ffbc7d49c3c9f1ad0602cc9ac293680a2bb9731fa469a6a654b87",
+  "ck2_status": {
+    "support": "experimental",
+    "b580_available_on_development_host": false,
+    "xpu_pretrained_inference_validated": false,
+    "fresh_arch_bootstrap_validated": false,
+    "qsv_encoding_validated": false,
+    "ck2_weights_downloaded_on_development_host": false,
+    "real_footage_quality_validated": false,
+    "long_clip_reliability_validated": false
+  },
+  "limits": "CPU stand-in pipeline tests and backend mocks do not prove XPU operator or foundation-model compatibility. Run the configured check and pretrained verify commands on the B580."
+}

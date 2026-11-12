@@ -77,6 +77,14 @@ https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills
 
 ## Local commands
 
+CorridorKey 2.0 is a separate experimental Arc option: `python bootstrap.py
+--engine v2 --profile arc`, then `python run.py --engine v2 check` and `python
+run.py --engine v2 verify --output Output/ck2-b580-smoke`. Its dependencies,
+source and models stay in `.local/ck2`; the original `.venv` and P600 setup
+remain in place. See [the CK2 guide](docs/CORRIDORKEY2.md) for Arch commands,
+real-footage usage, licence terms and validation limits. No additional manual
+Git clone is needed; setup fetches the pinned source.
+
 ```text
 python run.py check
 python run.py hint --video /path/to/Input.mp4 --output /path/to/job/AlphaHint --screen green

@@ -87,7 +87,7 @@ select = ["E", "F", "W", "I", "B"]
 # Third-party code excluded via top-level exclude
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "integrations/ck2/tests"]
 markers = [
     "gpu: requires CUDA GPU (skipped in CI)",
     "slow: long-running test",

@@ -1,0 +1,401 @@
+diff --git a/infer.py b/infer.py
+--- a/infer.py
++++ b/infer.py
+@@ -12,6 +12,7 @@
+ 
+ import torch
+ 
++from corridorkey.accelerator import require_device
+ from corridorkey.runtime import (
+     InferenceConfig,
+     RuntimePaths,
+@@ -45,7 +46,8 @@
+ 
+ def main():
+     ap = argparse.ArgumentParser(
+-        description="CorridorKey v2 native-resolution raw-video inference")
++        description="CorridorKey v2 native-resolution raw-video inference", allow_abbrev=False)
++    ap.add_argument("--device", default="cuda", help="Explicit cuda[:N] or xpu[:N]; no fallback.")
+     ap.add_argument("--input", required=True,
+                     help="Input video file or directory of image frames.")
+     ap.add_argument("--output_dir", required=True)
+@@ -60,8 +62,8 @@
+     ap.add_argument("--carry_hint_quality", type=float, default=0.95)
+     ap.add_argument("--no_carry_hint", action="store_true")
+     ap.add_argument("--hann_chunk", type=int, default=None,
+-                    help="Frames per stage-1 window. Default: chosen "
+-                         "automatically from free GPU memory.")
++                    help="Frames per stage-1 window. Default: conservative staged "
++                         "XPU window, or CUDA memory estimate.")
+     ap.add_argument("--hann_stride", type=int, default=None,
+                     help="Frames between stage-1 windows. Default: half of "
+                          "--hann_chunk.")
+@@ -109,7 +111,7 @@
+     ap.add_argument("--ffmpeg_threads", type=int, default=2)
+     ap.add_argument("--stage2_batch", type=int, default=1,
+                     help="Number of /1 output frames to run/render per stage-2 batch.")
+-    ap.add_argument("--low_vram_foundation_chunk", type=int, default=4)
++    ap.add_argument("--low_vram_foundation_chunk", type=int, default=None)
+     ap.add_argument("--low_vram_mlp_chunk_tokens", type=int, default=65536)
+     ap.add_argument("--low_vram_enc_frame_chunk", type=int, default=1)
+     ap.add_argument("--low_vram_swin_window_batch", type=int, default=16)
+@@ -117,8 +119,7 @@
+                     default=2048)
+     args = ap.parse_args()
+ 
+-    if not torch.cuda.is_available():
+-        raise RuntimeError("CorridorKey v2 runtime requires a CUDA GPU.")
++    device = require_device(args.device)
+     require_ffmpeg(args.ffmpeg_bin)
+     package_root = Path(__file__).resolve().parent
+     paths = RuntimePaths.from_package(package_root, args.weights)
+@@ -133,7 +134,7 @@
+     )
+     # With no explicit memory settings, pick them per clip from free GPU memory.
+     auto_vram = args.hann_chunk is None and args.hann_stride is None and not args.low_vram
+-    hann_chunk = args.hann_chunk if args.hann_chunk is not None else 80
++    hann_chunk = args.hann_chunk if args.hann_chunk is not None else (4 if device.type == "xpu" else 80)
+     hann_stride = args.hann_stride if args.hann_stride is not None else max(1, hann_chunk // 2)
+     infer_cfg = InferenceConfig(
+         hann_chunk=hann_chunk,
+@@ -147,7 +148,9 @@
+         start_mode=args.start_mode,
+         seed=args.seed,
+         low_vram=args.low_vram,
+-        low_vram_foundation_chunk=args.low_vram_foundation_chunk,
++        low_vram_foundation_chunk=(args.low_vram_foundation_chunk
++                                   if args.low_vram_foundation_chunk is not None
++                                   else (1 if device.type == "xpu" else 4)),
+         low_vram_mlp_chunk_tokens=args.low_vram_mlp_chunk_tokens,
+         low_vram_enc_frame_chunk=args.low_vram_enc_frame_chunk,
+         low_vram_swin_window_batch=args.low_vram_swin_window_batch,
+@@ -166,7 +169,7 @@
+         output_format=args.output_format,
+         exr_dtype=args.exr_dtype,
+     )
+-    model = load_model(paths, device="cuda")
++    model = load_model(paths, device=str(device))
+     run_inference(
+         model,
+         args.input,
+diff --git a/corridorkey/runtime.py b/corridorkey/runtime.py
+--- a/corridorkey/runtime.py
++++ b/corridorkey/runtime.py
+@@ -13,6 +13,7 @@
+ import torch.nn.functional as F
+ 
+ from . import color_utils as cu
++from .accelerator import empty_cache, require_device, runtime_device, synchronize
+ from .model import CorridorKeyV3
+ from .video_io import (
+     ExrSequenceWriter,
+@@ -187,10 +188,20 @@
+     return 1, 1, True, estimate
+ 
+ 
+-def apply_auto_vram(cfg: InferenceConfig, shape_hw, num_frames: int) -> None:
+-    free_bytes, _ = torch.cuda.mem_get_info()
++def apply_auto_vram(cfg: InferenceConfig, shape_hw, num_frames: int, device="cuda") -> None:
++    device = torch.device(device)
++    if device.type == "xpu":
++        # Upstream's memory table was measured on CUDA, not Intel GPUs.
++        cfg.hann_chunk = min(4, max(1, num_frames))
++        cfg.hann_stride = max(1, cfg.hann_chunk // 2)
++        cfg.low_vram = True
++        print("  Experimental XPU: staged low-VRAM profile, "
++              f"hann_chunk={cfg.hann_chunk}, hann_stride={cfg.hann_stride}; "
++              "CUDA memory estimates are not used.")
++        return
++    free_bytes, _ = torch.cuda.mem_get_info(device)
+     # Memory this process already holds (the loaded model) is part of the budget.
+-    budget_gb = (free_bytes + torch.cuda.memory_reserved()) / 2**30
++    budget_gb = (free_bytes + torch.cuda.memory_reserved(device)) / 2**30
+     chunk, stride, low_vram, estimate = select_vram_profile(shape_hw, num_frames, budget_gb)
+     cfg.hann_chunk, cfg.hann_stride, cfg.low_vram = chunk, stride, low_vram
+     print(f"  Auto VRAM: {budget_gb:.1f} GB available at {shape_hw[1]}x{shape_hw[0]} -> "
+@@ -236,6 +247,7 @@
+ 
+ 
+ def load_model(paths: RuntimePaths, device: str = "cuda") -> CorridorKeyV3:
++    device = require_device(device)
+     paths.validate()
+     prepare_runtime_environment(paths)
+     ckpt = load_runtime_checkpoint(paths.weights)
+@@ -247,7 +259,8 @@
+     cfg["rvm_ckpt"] = str(paths.rvm_ckpt)
+     cfg["foundation_stats_path"] = str(paths.foundation_stats)
+     cfg["gradient_checkpoint"] = False
+-    cfg["device"] = device
++    # Initialize on CPU; staged passes explicitly transfer to the chosen GPU.
++    cfg["device"] = "cpu"
+     cfg["stage1_recurrent_64_sites"] = ()
+ 
+     print(f"Loading CorridorKey v2 runtime weights: {paths.weights}")
+@@ -260,6 +273,7 @@
+             "runtime checkpoint did not match model: "
+             f"missing={train_missing[:8]} unexpected={train_unexpected[:8]}")
+     print(f"  loaded weights; omitted frozen foundation tensors={len(missing)}")
++    model._corridorkey_device = str(device)
+     model.eval()
+     del ckpt
+     return model
+@@ -334,14 +348,14 @@
+                 rgb.reshape(Tc, 3, H, W), size=(H_e, W_e),
+                 mode="bilinear", align_corners=False,
+             ).reshape(1, Tc, 3, H_e, W_e).clamp(0.0, 1.0)
+-            with torch.autocast("cuda", dtype=torch.bfloat16):
++            with torch.autocast(device.type, dtype=torch.bfloat16):
+                 feats, state = model.foundations.rvm(rgb_rvm, state=state)
+             feats_cpu = (feats.float().cpu() - mean) / std
+             out[t0:t0 + Tc] = feats_cpu[0].numpy().astype(np.float16)
+             del rgb, rgb_rvm, feats, feats_cpu, display
+     out.flush()
+     del out
+-    torch.cuda.empty_cache()
++    empty_cache(runtime_device(model))
+ 
+ 
+ @torch.no_grad()
+@@ -383,7 +397,7 @@
+             Tc = display.shape[0]
+             rgb = display.unsqueeze(0).to(device, non_blocking=True)
+             rgb_radio, rgb_moge = _build_foundation_inputs(rgb)
+-            with torch.autocast("cuda", dtype=torch.bfloat16):
++            with torch.autocast(device.type, dtype=torch.bfloat16):
+                 ff = model.foundations(
+                     rgb_cradio=rgb_radio.reshape(Tc, 3, *rgb_radio.shape[-2:]),
+                     rgb_moge=rgb_moge.reshape(Tc, 3, *rgb_moge.shape[-2:]),
+@@ -397,27 +411,27 @@
+     if cradio_out is not None:
+         cradio_out.flush()
+         del cradio_out
+-    torch.cuda.empty_cache()
++    empty_cache(runtime_device(model))
+     return paths
+ 
+ 
+ def _phase1_setup(model, *, stage1_on_gpu: bool = True):
+-    model.foundations.cuda()
++    model.foundations.to(runtime_device(model))
+     # Low-VRAM mode precomputes foundation features first, so stage 1 waits on CPU.
+     if stage1_on_gpu:
+-        model.stage1.cuda()
++        model.stage1.to(runtime_device(model))
+     else:
+         model.stage1.cpu()
+     model.stage2.cpu()
+-    torch.cuda.empty_cache()
++    empty_cache(runtime_device(model))
+ 
+ 
+ def _phase2_setup(model):
+     model.foundations.cpu()
+     model.stage1.cpu()
+-    torch.cuda.empty_cache()
+-    model.stage2.cuda()
+-    torch.cuda.synchronize()
++    empty_cache(runtime_device(model))
++    model.stage2.to(runtime_device(model))
++    synchronize(runtime_device(model))
+ 
+ 
+ @torch.no_grad()
+@@ -512,7 +526,7 @@
+             if foundation_paths is None:
+                 rgb_found = display_chunk.unsqueeze(0).to(device, non_blocking=True)
+                 rgb_radio, rgb_moge = _build_foundation_inputs(rgb_found)
+-                with torch.autocast("cuda", dtype=torch.bfloat16):
++                with torch.autocast(device.type, dtype=torch.bfloat16):
+                     ff = model.foundations(
+                         rgb_cradio=rgb_radio.reshape(Tc, 3, *rgb_radio.shape[-2:]),
+                         rgb_moge=rgb_moge.reshape(Tc, 3, *rgb_moge.shape[-2:]),
+@@ -528,7 +542,7 @@
+             if rvm_map is not None:
+                 rvm_feat = torch.from_numpy(np.asarray(rvm_map[t0:t1]).copy())
+                 rvm_feat = rvm_feat.unsqueeze(0).to(device, non_blocking=True).float()
+-            with torch.autocast("cuda", dtype=torch.bfloat16):
++            with torch.autocast(device.type, dtype=torch.bfloat16):
+                 s1 = model.stage1(
+                     rgb_c, hint_c, moge_feat, cradio_feat=cradio_feat,
+                     rvm_feat=rvm_feat, t_stride=1.0,
+@@ -565,7 +579,7 @@
+             del model_chunk, display_chunk, review_chunk
+             flush_before(next_start)
+             print(f"      window {i + 1}/{len(starts)} [{t0}:{t1}]", flush=True)
+-        torch.cuda.synchronize()
++        synchronize(runtime_device(model))
+         flush_before(T_all + 1)
+     finally:
+         reader.close()
+@@ -575,7 +589,7 @@
+     if baton_fp16 is not None:
+         baton_fp16.flush()
+     del baton_fp16, live_acc, live_w, rvm_map, cradio_map, moge_map
+-    torch.cuda.empty_cache()
++    empty_cache(runtime_device(model))
+ 
+ 
+ def _crop_native_torch(x: torch.Tensor, meta: dict) -> torch.Tensor:
+@@ -763,7 +777,7 @@
+     T_all = int(meta["num_frames"])
+     H, W = meta["shape_hw"]
+     if cfg.auto_vram:
+-        apply_auto_vram(cfg, (H, W), T_all)
++        apply_auto_vram(cfg, (H, W), T_all, runtime_device(model))
+     H_out, W_out = meta["output_hw"]
+     meta["cutout_linear"] = cfg.cutout_linear
+     meta["despill_strength"] = cfg.despill_strength
+@@ -805,6 +819,8 @@
+             with open(settings_path, "w") as sf:
+                 sf.write(f"CorridorKey v2 Inference Settings Log\n")
+                 sf.write(f"====================================\n")
++                sf.write(f"Device: {runtime_device(model)}\n")
++                sf.write("Precision: BF16 autocast\n")
+                 sf.write(f"Input: {input_path}\n")
+                 sf.write(f"Output Directory: {output_dir}\n")
+                 sf.write(f"Resolution: {W_out}x{H_out}\n")
+@@ -865,12 +881,12 @@
+                 reader_kind=reader_kind)
+             model.foundations.cpu()
+             model.stage2.cpu()
+-            model.stage1.cuda()
+-            torch.cuda.empty_cache()
++            model.stage1.to(runtime_device(model))
++            empty_cache(runtime_device(model))
+         else:
+-            model.stage2.cuda()
++            model.stage2.to(runtime_device(model))
+             model.stage2.eval()
+-            torch.cuda.empty_cache()
++            empty_cache(runtime_device(model))
+ 
+         stage2_batch = max(1, int(cfg.stage2_batch))
+ 
+@@ -883,7 +899,7 @@
+                 baton_np = np.stack([item[1] for item in sub], axis=0)
+                 baton_t = torch.from_numpy(baton_np).unsqueeze(0)
+                 baton_t = baton_t.to(device, non_blocking=True).float()
+-                with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
++                with torch.inference_mode(), torch.autocast(device.type, dtype=torch.bfloat16):
+                     logits = model.stage2(rgb_t, baton_t)
+                     if isinstance(logits, tuple):
+                         logits = logits[0]
+@@ -932,6 +948,6 @@
+         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_baton.f16")
+         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_foundation_cradio.f32")
+         safe_remove(cfg.temp_dir / f"{raw_clip_name(input_path)}_foundation_moge.f32")
+-        torch.cuda.empty_cache()
++        empty_cache(runtime_device(model))
+     print(f"  wrote {len(writers)} output video(s) for {clip_name} "
+           f"({T_all} frames @ {W_out}x{H_out})")
+diff --git a/corridorkey/accelerator.py b/corridorkey/accelerator.py
+new file mode 100644
+--- /dev/null
++++ b/corridorkey/accelerator.py
+@@ -0,0 +1,42 @@
++"""Explicit accelerator operations for the experimental CorridorKey 2 port.
++
++Copyright (c) Corridor Digital LLC and contributors. Distributed under the
++Corridor Key Licence v2; see the pinned upstream LICENSE fetched by setup.
++"""
++
++import torch
++
++
++def require_device(requested):
++    device = torch.device(requested)
++    if device.type not in ("cuda", "xpu"):
++        raise ValueError("CorridorKey 2 requires an explicit CUDA or Intel XPU device; no CPU fallback.")
++    backend = getattr(torch, device.type, None)
++    if backend is None or not backend.is_available():
++        raise RuntimeError(f"Requested {device.type} GPU is unavailable; no fallback selected.")
++    index = device.index if device.index is not None else backend.current_device()
++    if index < 0 or index >= backend.device_count():
++        raise ValueError(f"GPU index out of range: {requested}")
++    device = torch.device(device.type, index)
++    backend.set_device(device)
++    if device.type == "cuda" and not backend.is_bf16_supported():
++        raise RuntimeError("CorridorKey 2 needs BF16 support. Use the v1 p600 profile on Pascal.")
++    return device
++
++
++def runtime_device(model):
++    # All model parameters may temporarily be on CPU between staged passes.
++    saved = getattr(model, "_corridorkey_device", None)
++    return torch.device(saved) if saved is not None else next(model.stage1.parameters()).device
++
++
++def empty_cache(device):
++    device = torch.device(device)
++    backend = getattr(torch, device.type)
++    with backend.device(device):
++        backend.empty_cache()
++
++
++def synchronize(device):
++    device = torch.device(device)
++    getattr(torch, device.type).synchronize(device)
+diff --git a/corridorkey/video_io.py b/corridorkey/video_io.py
+--- a/corridorkey/video_io.py
++++ b/corridorkey/video_io.py
+@@ -602,6 +602,28 @@
+     if not is_last:
+         w[Tc - n:] = ramp.flip(0)
+     return w
++
++
++def _queue_put(writer, item):
++    # Encoder or EXR worker failures must not leave a producer blocked on a
++    # full queue after the consumer has exited.
++    while True:
++        if writer.err is not None:
++            raise writer.err
++        try:
++            writer.q.put(item, timeout=0.1)
++            return
++        except queue.Full:
++            if not writer.thread.is_alive():
++                raise RuntimeError("CorridorKey output worker stopped unexpectedly")
++
++
++def _finish_writer_thread(writer):
++    try:
++        _queue_put(writer, None)
++    except Exception as exc:
++        writer.err = exc
++    writer.thread.join()
+ 
+ 
+ class ThreadedVideoWriter:
+@@ -686,11 +708,10 @@
+                 f"expected batched frames as NHWC uint16 with {self.channels} channels, got {arr.shape}")
+         if arr.dtype != np.uint16:
+             raise ValueError(f"expected uint16 frames, got {arr.dtype}")
+-        self.q.put(arr)
++        _queue_put(self, arr)
+ 
+     def release(self):
+-        self.q.put(None)
+-        self.thread.join()
++        _finish_writer_thread(self)
+         if self.proc is not None and self.proc.stdin is not None:
+             self.proc.stdin.close()
+         rc = self.proc.wait() if self.proc is not None else 0
+@@ -766,15 +787,14 @@
+                 f"{self.channels} channels, got {arr.shape}")
+         if arr.dtype != np.float32:
+             raise ValueError(f"expected float32 frames, got {arr.dtype}")
+-        self.q.put((self.frame_idx, arr))
++        _queue_put(self, (self.frame_idx, arr))
+         self.frame_idx += arr.shape[0]
+ 
+     def write(self, frame: np.ndarray):
+         self.write_many(frame[None])
+ 
+     def release(self):
+-        self.q.put(None)
+-        self.thread.join()
++        _finish_writer_thread(self)
+         if self.err is not None:
+             raise self.err
+ 

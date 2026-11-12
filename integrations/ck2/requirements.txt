@@ -1,0 +1,13 @@
+# Isolated CK2 environment only. Do not install into the v1 .venv.
+numpy==1.26.4
+# OpenCV 4.12 requires NumPy 2 on Python 3.12; retain EXR-capable 4.11.
+opencv-python==4.11.0.86
+transformers==4.57.6
+timm==1.0.26
+safetensors==0.6.2
+huggingface-hub==0.36.2
+einops==0.8.1
+scipy==1.16.3
+pillow==11.3.0
+tqdm==4.67.1
+utils3d @ git+https://github.com/EasternJournalist/utils3d.git@83bfa5bda008803f6521ce9547f94023b8afeddd

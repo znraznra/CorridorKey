@@ -11,8 +11,16 @@ available when that is the user's editor.
 
 ## Choose the direction
 
+Select the engine explicitly when relevant. Version 1 remains the default and
+the tested P600 path. For the experimental CorridorKey 2 B580 backend, read
+[the CK2 runtime reference](references/runtime-v2.md). It has a separate
+environment/configuration, optional hints and different EXR color/alpha
+conventions. Never silently switch versions or describe the untested B580 path
+as hardware-validated.
+
 - **Remove an existing green/blue screen:** run CorridorKey with the original
-  plate plus an aligned coarse alpha hint. Deliver a transparent image sequence
+  plate plus an aligned coarse alpha hint for version 1 (version 2 hints are
+  optional). Deliver a transparent image sequence
   or another explicitly requested alpha-capable format.
 - **Put a subject onto green:** first obtain an aligned subject matte, then
   composite the foreground onto solid green. Ordinary-background segmentation
@@ -57,7 +65,7 @@ The hint must be visible grayscale RGB: white subject, black background, soft
 gray edges. Viewing alpha in a viewer alone does not change exported RGB.
 Preserve frame alignment and count. Avoid large dilated foreground halos.
 
-Run a short CorridorKey sample before the full clip. Use the backend factory so
+Run a short CorridorKey sample before the full clip. For version 1, use the backend factory so
 the P600 receives FP32 eager execution. Prefer internal 1024 for this P600 and
 512 for drafts; internal size is distinct from delivery resolution. Do not
 silently lower requested processing quality. Keep CPU post-processing unless
